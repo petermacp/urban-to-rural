@@ -1,0 +1,997 @@
+---
+title: "Prediction of urban-to-rural TB prevalence"
+format:
+  html:
+    embed-resources: true
+---
+
+### Libraries
+
+Load the required packages
+
+```{r}
+library(tidyverse)
+library(here)
+library(brms)
+library(tidybayes)
+library(scales)
+library(DT)
+```
+
+### Functions
+
+1. Draw posterior samples from the timeEffects Model (i.e. meta-regression model, with time covariate, and random-effects for study ID and country)
+
+```{r}
+sample_posterior_time_model <- function(data, model, years, reformula){
+
+
+  year_zero <- data %>% 
+  select(year, year_z) %>% arrange(year_z) %>%
+  filter(year_z==0) %>%
+  distinct() %>%
+  pull(year)
+
+  year_z <- years - year_zero
+
+  nd <- data %>%
+    distinct(WHO.region, study.country) %>%
+    mutate(logOR_se = 1) %>%
+    crossing(year_z)
+
+  ur_draws <- add_epred_draws({model}, 
+                              newdata = nd, 
+                              re_formula = reformula) %>%
+    mutate(urRatio = exp(.epred))
+
+  ur_sum <- ur_draws %>%
+    ungroup() %>%
+    group_by(year_z, study.country) %>%
+    mean_qi(urRatio)
+
+  ur_time_out <- lst(
+    ur_draws = ur_draws,
+    ur_sum = ur_sum)
+
+}
+```
+
+2. Organise the population deonominator data to align with the model predictions
+
+```{r}
+organise_pop_denominators <- function(modelling_data, population_data, urban_data, years) {
+
+  study.countries <- modelling_data %>%
+    distinct(study.country) %>%
+    pull(study.country)
+
+  harmonise_country <- function(x) {
+    case_when(
+      x == "Viet Nam" ~ "Vietnam",
+      x == "Gambia, The" ~ "Gambia",
+      x == "Lao PDR" ~ "Laos",
+      x == "Korea, Dem. People's Rep." ~ "North Korea",
+      TRUE ~ x
+    )
+  }
+
+  population_data <- population_data %>%
+    mutate(study.country = harmonise_country(Country_Name))
+
+  urban_data <- urban_data %>%
+    mutate(study.country = harmonise_country(`Country Name`))
+
+  pops_df <- population_data %>%
+    filter(study.country %in% study.countries) %>%
+    select(study.country, any_of(as.character(years))) %>%
+    pivot_longer(
+      cols = -study.country,
+      names_to = "year",
+      values_to = "population"
+    ) %>%
+    mutate(
+      year = as.integer(year),
+      population = as.numeric(population)
+    )
+
+  urban_df <- urban_data %>%
+    filter(study.country %in% study.countries) %>%
+    select(study.country, any_of(as.character(years))) %>%
+    pivot_longer(
+      cols = -study.country,
+      names_to = "year",
+      values_to = "urban_perc"
+    ) %>%
+    mutate(
+      year = as.integer(year),
+      urban_perc = as.numeric(urban_perc),
+      urban_prop = urban_perc / 100
+    )
+
+  population_out <- left_join(pops_df, urban_df, by = c("study.country", "year")) %>%
+    mutate(
+      rural_perc = 100 - urban_perc,
+      rural_prop = 1 - urban_prop,
+      urban_population = population * urban_prop,
+      rural_population = population * rural_prop,
+      year_z = year - 2012
+    ) %>%
+    arrange(study.country, year)
+
+  return(population_out)
+}
+```
+
+
+3. WHO TB burden data
+
+```{r}
+get_who_tb_burden <- function(modelling_data, who_tb_data, years) {
+  
+  year_zero <- modelling_data %>% 
+    select(year, year_z) %>% arrange(year_z) %>%
+    filter(year_z==0) %>%
+    distinct() %>%
+    pull(year)
+
+  study.countries <- modelling_data %>%
+    distinct(study.country) %>%
+    pull(study.country)
+  
+  who_tb_estimates <- who_tb_data %>%
+    select(
+      study.country = country,
+      year,
+      e_inc_100k:e_inc_num_hi,
+      c_cdr:c_cdr_hi
+    ) %>%
+    filter(year %in% years) %>%
+    mutate(
+      year = as.integer(year),
+      study.country = case_when(
+        study.country == "Viet Nam" ~ "Vietnam",
+        study.country == "United Republic of Tanzania" ~ "Tanzania",
+        study.country == "Lao People's Democratic Republic" ~ "Laos",
+        study.country == "Democratic People's Republic of Korea" ~ "North Korea",
+        TRUE ~ study.country
+      )
+    ) %>%
+    filter(study.country %in% study.countries) %>%
+    arrange(study.country, year) %>%
+    mutate(year_z = year - year_zero,
+           year = as.integer(year))
+  
+  return(who_tb_estimates)
+}
+```
+
+
+4. Join the the population data to the WHO data
+
+```{r}
+join_population_with_who <- function(population_data, who_data) {
+  population_and_who <- left_join(
+    population_data,
+    who_data,
+    by = c("study.country", "year", "year_z")
+  )
+  
+  return(population_and_who)
+}
+```
+
+5. Multivariate model of WHO TB incidence and CDR data for subsequently estimating prevalence
+
+Convert incidence to prevalence using the steady-state identity:
+
+::: {.callout}
+prevalence ≈ incidence (cases/year) × average duration of disease (years)
+:::
+
+For the duration, define an effective duration that averages over untreated and treated trajectories:
+
+::: {.callout}
+D_eff = (1−c) D_untreated + c x D_treated
+:::
+
+Where c is the fraction of incident cases that are treated (e.g. approximated by case detection ratio). 
+
+```{r}
+estimate_prevalence2 <- function(input_data,
+                               d_treated = 0.5,
+                               years,
+                               duration_mode = c("fixed", "mixture"),
+                               sample_d_t = FALSE,
+                               d_t_range = c(0.25, 0.75),
+                               sp_med = 1.57, sp_lo = 1.37, sp_hi = 1.81,
+                               sn_med = 5.35, sn_lo = 3.42, sn_hi = 8.23,
+                               seed = NULL) {
+
+  duration_mode <- match.arg(duration_mode)
+  if (!is.null(seed)) set.seed(seed)
+
+  get_lognorm_pars <- function(med, lo, hi) {
+    meanlog <- log(med)
+    sdlog <- (log(hi) - log(lo)) / (2 * qnorm(0.975))
+    list(meanlog = meanlog, sdlog = sdlog)
+  }
+
+  sp_pars <- get_lognorm_pars(sp_med, sp_lo, sp_hi)
+  sn_pars <- get_lognorm_pars(sn_med, sn_lo, sn_hi)
+
+  mv_data <- input_data %>%
+    mutate(
+      inc_med = e_inc_100k,
+      inc_lo  = e_inc_100k_lo,
+      inc_hi  = e_inc_100k_hi,
+      log_inc_med = log(inc_med),
+      se_log_inc = (log(pmax(inc_hi, 1e-9)) - log(pmax(inc_lo, 1e-9))) / (2 * 1.96),
+      se_log_inc = ifelse(is.na(se_log_inc) | se_log_inc == 0, 1e-4, se_log_inc),
+
+      cdr_prop = pmin(pmax(c_cdr / 100, 1e-6), 1 - 1e-6),
+      logit_cdr_med = qlogis(cdr_prop),
+      logit_cdr_lo  = qlogis(pmax(c_cdr_lo / 100, 1e-9)),
+      logit_cdr_hi  = qlogis(pmin(c_cdr_hi / 100, 1 - 1e-9)),
+      se_logit_cdr = (logit_cdr_hi - logit_cdr_lo) / (2 * 1.96),
+      se_logit_cdr = ifelse(is.na(se_logit_cdr) | se_logit_cdr == 0, 1e-4, se_logit_cdr)
+    )
+
+  #Fit multivariate model
+  bf_inc <- bf(log_inc_med | se(se_log_inc) ~
+               1 +
+               gp(year_z, by = study.country, k = 5) + 
+               (1 | study.country))
+
+  bf_cdr <- bf(logit_cdr_med | se(se_logit_cdr) ~
+               1 +
+               gp(year_z, by = study.country, k = 5) +
+               (1 | study.country))
+
+  fit_mv <- brm(
+    bf_inc + bf_cdr + set_rescor(FALSE),
+    data = mv_data,
+    prior = c(
+        prior(normal(logit(0.6), 1), class = "Intercept", resp = "logitcdrmed"),
+        prior(normal(0, 1), class = "sd", resp = "logitcdrmed")
+    ),
+    chains = 4, cores = 4, iter = 4000,
+    backend = "cmdstanr",
+    control = list(adapt_delta = 0.95, max_treedepth = 15)
+  )
+
+  #Get posterior draws
+  mv_draws <- add_epred_draws(fit_mv, newdata = mv_data, allow_new_levels = TRUE) %>%
+    ungroup() %>%
+    select(study.country, year, year_z, .category, .epred, .draw) %>%
+    pivot_wider(names_from = .category, values_from = .epred)
+
+  #sample durations per posterior draw 
+  draw_ids <- sort(unique(mv_draws$.draw))
+  n_draws <- length(draw_ids)
+
+  dur_draws <- tibble(.draw = draw_ids) %>%
+    mutate(
+      dur_sp = exp(rnorm(n_draws, sp_pars$meanlog, sp_pars$sdlog)),
+      dur_sn = exp(rnorm(n_draws, sn_pars$meanlog, sn_pars$sdlog)),
+      prop_sp = rbeta(n_draws, 2, 2),
+      dur_untreated = prop_sp * dur_sp + (1 - prop_sp) * dur_sn
+    )
+
+  if (sample_d_t) {
+    dur_draws <- dur_draws %>%
+      mutate(d_treated_draw = runif(n_draws, d_t_range[1], d_t_range[2]))
+  } else {
+    dur_draws <- dur_draws %>%
+      mutate(d_treated_draw = d_treated)
+  }
+
+  #Merge durations into predictions
+  mv_draws2 <- mv_draws %>%
+    left_join(dur_draws, by = ".draw") %>%
+    mutate(
+      epred_inc = exp(logincmed),
+      epred_cdr = plogis(logitcdrmed),
+      prev = epred_inc * (epred_cdr * d_treated_draw + (1 - epred_cdr) * dur_untreated)
+    )
+
+  #Summarise per country-year
+  mv_sum <- mv_draws2 %>%
+    group_by(study.country, year) %>%
+    mean_qi(prev) %>%
+    mutate(model = "brms multivariate") %>%
+    select(-.width, -.point, -.interval)
+
+  list(fit_mv = fit_mv, mv_draws = mv_draws2, mv_sum = mv_sum, dur_draws = dur_draws)
+}
+```
+
+6. Estimate rural and urban numbers of cases and percent distribution
+
+```{r}
+estimate_case_distribution <- function(ur_draws, prev_draws, population_data) {
+  
+  ur_draws_cleaned <- ur_draws %>%
+    select(study.country, year_z, .draw, urRatio)
+  
+  prev_draws_cleaned <- prev_draws %>%
+    ungroup() %>%
+    mutate(year_z = year - year_zero) %>%
+    select(study.country, year, year_z, .draw, prev)
+  
+  cases_draws <- prev_draws_cleaned %>%
+    ungroup() %>%
+    inner_join(ur_draws_cleaned, by = c("study.country", ".draw", "year_z")) %>%
+    left_join(population_data, by = c("study.country", "year", "year_z")) %>%
+    mutate(
+      urban_population = as.numeric(urban_population),
+      rural_population = as.numeric(rural_population),
+      total_pop = urban_population + rural_population,
+      p_total   = prev / 1e5, 
+      
+      p_u_prop = urban_population / total_pop,
+      p_r_prop = rural_population / total_pop,
+      
+      p_r = p_total / (urRatio * p_u_prop + p_r_prop),
+      p_u = urRatio * p_r,
+      
+      cases_u = p_u * urban_population,
+      cases_r = p_r * rural_population,
+      cases_total = cases_u + cases_r,
+      
+      perc_u = cases_u / cases_total,
+      perc_r = cases_r / cases_total
+    )
+  
+  cases_summary <- cases_draws %>%
+    group_by(study.country, year) %>%
+    summarise(
+      cases_u_med = median(cases_u),
+      cases_u_lo  = quantile(cases_u, 0.025),
+      cases_u_hi  = quantile(cases_u, 0.975),
+      
+      cases_r_med = median(cases_r),
+      cases_r_lo  = quantile(cases_r, 0.025),
+      cases_r_hi  = quantile(cases_r, 0.975),
+      
+      perc_u_med = median(perc_u),
+      perc_u_lo  = quantile(perc_u, 0.025),
+      perc_u_hi  = quantile(perc_u, 0.975),
+      
+      perc_r_med = median(perc_r),
+      perc_r_lo  = quantile(perc_r, 0.025),
+      perc_r_hi  = quantile(perc_r, 0.975),
+      .groups = "drop"
+    )
+  
+  list(cases_draws = cases_draws, cases_summary = cases_summary)
+}
+```
+
+### Data
+
+Load the dataset that we used to fit the model
+
+```{r}
+bactModelDF <- read_rds("data/bactModelDF.rds")
+```
+
+### Model fit object
+
+Load the model fit (this is from the previous script)
+
+```{r}
+
+timeEffectMod <- read_rds("output/timeEffectMod.rds")
+
+summary(timeEffectMod)
+
+```
+
+
+### Population denominators
+
+Now we want to import the population estimates for 2023 for each country.
+
+```{r}
+
+pops <- read_csv("data/Population_by_countries.csv")
+
+```
+
+
+### Proportion of country in urban and rural areas
+
+Now get the urban and rural population proportions for each country
+
+https://data.worldbank.org/indicator/SP.URB.TOTL.IN.ZS
+
+```{r}
+
+urban_pop <- read_csv("data/API_SP.URB.TOTL.IN.ZS_DS2_en_csv_v2_561251.csv", skip = 4)
+
+```
+
+
+### WHO TB incidence and case detection data
+
+Read in the WHO TB burden data
+
+```{r}
+
+who_tb_burden <- read_csv("data/TB_burden_countries_2025-12-04.csv")
+
+```
+
+
+
+Get year zero for centred baseline
+
+```{r}
+year_zero <- bactModelDF %>% 
+  select(year, year_z) %>% arrange(year_z) %>%
+  filter(year_z==0) %>%
+  distinct() %>%
+  pull(year)
+```
+
+
+### Analysis
+
+
+1. Get the urban-to-rural prevalence draws from the model
+
+```{r}
+
+ur_out <- sample_posterior_time_model(data = bactModelDF, 
+                                        model = timeEffectMod, 
+                                        years = c(2000:2024), 
+                                        reformula = ~(1 + year_z|study.country))
+
+
+```
+
+Plot these out - what do they look like?
+
+```{r}
+
+ur_out$ur_draws %>%
+  filter(study.country !="North Korea") %>%
+  ggplot(aes(x = year_z + year_zero, y = urRatio)) +
+  stat_lineribbon(.width = 0.95, fill = "goldenrod", alpha = 0.5) +
+  geom_hline(yintercept = 1, linetype = 2) +
+  scale_y_continuous(
+    trans = "log10",
+    labels = label_number(accuracy = 0.1),
+    breaks = scales::log_breaks()
+  ) +
+  facet_wrap(~study.country) +
+  labs(x = "Year",
+       y = "Urban-to-rural prevalence ratio (95% CrI)") +
+    theme(axis.text.x = element_text(angle = 90))
+
+
+ggsave("output/S12 Fig.png", width=10, height=7)
+ggsave("output/S12 Fig.tiff", width=10, height=7)
+
+
+```
+
+
+2. Organise population denominators
+
+```{r}
+pop_denominators_out <- organise_pop_denominators(modelling_data = bactModelDF, 
+                                                  population_data = pops, 
+                                                  urban_data = urban_pop, 
+                                                  years = c(2000:2024))
+
+pop_denominators_out <- pop_denominators_out %>%
+  filter(study.country !="North Korea")
+
+```
+
+Plot these out to inspect
+
+```{r}
+
+pop_denominators_out %>%
+  select(study.country, year, urban_population, rural_population) %>%
+  pivot_longer(
+    cols = c(urban_population, rural_population),
+    names_to = "population_type",
+    values_to = "value"
+  ) %>%
+    mutate(population_type = case_when(
+      population_type == "rural_population" ~ "Rural",
+      population_type == "urban_population"  ~ "Urban"
+    )) %>%
+  ggplot(aes(x = factor(year), y = value / 1e6, fill = population_type, colour = population_type)) +
+    geom_bar(stat = "identity", position = "stack") +
+    facet_wrap(~study.country, scales = "free_y") +
+    labs(
+      x = "Year",
+      y = "Population (millions)",
+      fill = "Population type",
+      colour = "Population type"
+    ) +
+    scale_x_discrete(breaks = function(x) x[seq(1, length(x), by = 4)]) + 
+    scale_fill_manual(values = c("darkorchid", "cadetblue")) +
+    scale_colour_manual(values = c("darkorchid", "cadetblue")) +
+    theme(axis.text.x = element_text(angle = 90))
+
+ggsave("output/S8 Fig.png", width=10, height=7)
+ggsave("output/S8 Fig.tiff", width=10, height=7)
+
+
+```
+
+Plot the proportion of urban and rural populations over time by country
+
+```{r}
+
+pop_denominators_out %>%
+  select(study.country, year, urban_prop, rural_prop) %>%
+  pivot_longer(cols = c(urban_prop, rural_prop),
+               names_to = "setting", values_to = "prop") %>%
+    mutate(setting = case_when(
+      setting == "rural_prop" ~ "Rural",
+      setting == "urban_prop"  ~ "Urban"
+    )) %>%
+  ggplot(aes(x = year, y = prop, fill = setting, colour = setting)) +
+  geom_bar(stat = "identity", position = "stack") +
+  facet_wrap(~study.country) +
+  scale_fill_manual(values = c("darkorchid", "cadetblue")) +
+  scale_colour_manual(values = c("darkorchid", "cadetblue")) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(x = "Year", y = "Population percentage", fill = "Population type", colour = "Population type") +
+  theme(axis.text.x = element_text(angle = 90))
+
+ggsave("output/S9 Fig.png", width=10, height=7)
+ggsave("output/S9 Fig.tiff", width=10, height=7)
+
+
+```
+
+Summarise population denominators
+
+```{r}
+pop_denominators_out %>%
+  filter(year == 2024) %>%
+  summarise(total_population = sum(population),
+            total_urban = sum(urban_population),
+            total_rural = sum(rural_population),
+            perc_urban = total_urban / total_population * 100,
+            perc_rural = total_rural / total_population * 100)
+
+
+```
+
+3. WHO TB burden data
+
+```{r}
+
+who_tb_out <- get_who_tb_burden(modelling_data = bactModelDF, 
+                                who_tb_data = who_tb_burden,
+                                years = c(2000:2024))
+
+```
+
+
+Note in 2024, WHO no longer reports data for incidence and case detection rate for North Korea for 2000-2024. Previous datasets included, within a flat incidence trend. We will therefore remove North Korea from predictions to be consisent with WHO estimates.
+
+```{r}
+
+who_tb_out <- who_tb_out %>%
+  filter(study.country !="North Korea")
+
+```
+
+
+Plot these out to look at them.
+
+Incidence
+
+```{r}
+who_tb_out %>%
+  ggplot(aes(x=year)) +
+  geom_ribbon(aes(ymin = e_inc_100k_lo, ymax = e_inc_100k_hi), alpha = 0.5, fill = "coral") +
+  geom_line(aes(y=e_inc_100k), colour = "coral") +
+  facet_wrap(~study.country, scales = "free_y")+
+  labs(x = "Year",
+       y = "Estimated TB incidence per 100k (95% CI)") +
+    theme(axis.text.x = element_text(angle = 90))
+
+ggsave("output/incidence.png", width=10, height=7) 
+ggsave("output/incidence.tiff", width=10, height=7) 
+
+```
+
+Case detection rate
+
+```{r}
+who_tb_out %>%
+  ggplot(aes(x=year)) +
+  geom_ribbon(aes(ymin = c_cdr_lo, ymax = c_cdr_hi), alpha = 0.5, fill = "mediumseagreen") +
+  geom_line(aes(y=c_cdr), colour = "mediumseagreen") +
+  labs(x = "Year",
+       y = "Case detection ratio (%, 95% CI)") +
+  facet_wrap(~study.country, scales = "free_y")+
+    theme(axis.text.x = element_text(angle = 90))
+
+ggsave("output/case_detection.png", width=10, height=7) 
+ggsave("output/case_detection.tiff", width=10, height=7) 
+
+```
+
+4. Join the population date to the WHO data
+
+```{r}
+
+population_and_who_out <- join_population_with_who(population_data = pop_denominators_out,
+                                                   who_data = who_tb_out)
+
+```
+
+Filter out North Korea again
+
+```{r}
+
+population_and_who_out <- population_and_who_out %>%
+  filter(study.country !="North Korea")
+
+```
+
+5. Estimate prevalence of TB by country and year
+
+```{r}
+
+prevalence_out <- estimate_prevalence2(input_data = population_and_who_out, 
+                                      duration_mode = "mixture", 
+                                      years = c(2000:2024),
+                                      seed = 1234)
+
+summary(prevalence_out$fit_mv)
+plot(prevalence_out$fit_mv, ask = FALSE)
+conditional_effects(prevalence_out$fit_mv, ask = FALSE)
+write_rds(prevalence_out, "output/fit_mv.rds")
+```
+
+Look at the predictions of Incidence and CDR from this model, before we start to look at prevalence estimates
+
+```{r}
+#prevalence_out <- read_rds("output/fit_mv.rds")
+
+prevalence_out$mv_draws %>%
+  ggplot(aes(x=year, y=epred_inc)) +
+  stat_lineribbon(.width = 0.95, fill = "coral", alpha = 0.5) +
+  geom_point(data = who_tb_out, aes(x = year, y=e_inc_100k), shape = 1) +
+  facet_wrap(~study.country, scales = "free_y") +
+  labs(x = "Year",
+       y = "Estimated TB incidence, per 100k (95% CrI)") +
+    theme(axis.text.x = element_text(angle = 90, vjust = 1))
+
+ggsave("output/S10 Fig.png", width=12, height=7) 
+ggsave("output/S10 Fig.tiff", width=12, height=7) 
+
+```
+
+```{r}
+prevalence_out$mv_draws %>%
+  ggplot(aes(x=year, y=epred_cdr*100)) +
+  stat_lineribbon(.width = 0.95, fill = "darkorchid", alpha = 0.5) +
+  geom_point(data = who_tb_out, aes(x = year, y=c_cdr), shape = 1) +
+  facet_wrap(~study.country, scales = "free_y") +
+  labs(x = "Year",
+       y = "Estimated TB case detection ratio (%)") +
+    theme(axis.text.x = element_text(angle = 90, vjust = 1))
+
+ggsave("output/S11 Fig.png", width=12, height=7) 
+ggsave("output/S11 Fig.tiff", width=12, height=7) 
+
+```
+
+6. Estimate the numbers of people with prevalent TB
+
+```{r}
+cases_out <- estimate_case_distribution(ur_draws = ur_out$ur_draws, 
+                                        prev_draws = prevalence_out$mv_draws, 
+                                        population_data = population_and_who_out)
+
+```
+
+Plot these summarys
+
+```{r}
+cases_out$cases_draws %>%
+  select(study.country, year, cases_u, cases_r) %>%
+  pivot_longer(cols = c(cases_u, cases_r)) %>%
+  mutate(name = case_when(
+    name == "cases_r" ~ "Rural",
+    name == "cases_u" ~ "Urban"
+  )) %>%
+  ggplot() +
+    stat_pointinterval(aes(x=year, y=value, colour = name), 
+    .width = 0.95, 
+    position = position_dodge(width=1),
+    point_size = 0.5,
+    size = 0.2) + 
+  scale_colour_manual(values = c("darkorchid", "cadetblue")) +
+  scale_y_continuous(
+    labels = label_number(),
+    breaks = pretty,
+  ) +
+    facet_wrap(~study.country, scales = "free_y") +
+    labs(x="Year",
+         y = "Number of prevalent cases (95% CrI)",
+         colour = NULL) +
+    theme(legend.position = "bottom",
+          axis.text.x = element_text(angle = 90))
+
+ggsave("output/S14 Fig.png", width=12, height=7) 
+ggsave("output/S14 Fig.tiff", width=12, height=7) 
+
+```
+
+
+Percentage of urban and rural cases over time
+
+```{r}
+
+cases_out$cases_draws %>%
+  select(study.country, year, perc_u, perc_r) %>%
+  pivot_longer(cols = c(perc_u, perc_r)) %>%
+  mutate(name = case_when(
+    name == "perc_u" ~ "Urban",
+    name == "perc_r" ~ "Rural"
+  )) %>%
+  ggplot() +
+    stat_pointinterval(aes(x=year, y=value, colour = name), 
+    .width = 0.95, 
+    position = position_dodge(width=1),
+    point_size = 1,
+    size = 0.3) + 
+  scale_colour_manual(values = c("darkorchid", "cadetblue")) +
+  scale_y_continuous(
+    labels = label_percent()
+  ) +
+    facet_wrap(~study.country) +
+    labs(x="Year",
+         y = "Percentage of people with prevalent TB (95% CrI)",
+         colour = NULL) +
+    theme(legend.position = "bottom",
+          axis.text.x = element_text(angle = 90))
+
+ggsave("output/Fig 4.png", width=12, height=7) 
+ggsave("output/Fig 4.tiff", width=12, height=7) 
+
+```
+
+Estimate the year at which countries reached parity (50% urban, 50% rural)
+
+```{r}
+
+#percentage
+cases_out$cases_draws %>%
+  ungroup() %>%
+  select(study.country, year, perc_u, perc_r) %>%
+  group_by(study.country, year) %>%
+  median_qi(perc_u, perc_r) %>%
+  group_by(study.country) %>%
+  filter(perc_u > perc_r) %>%
+  slice_min(year) %>%
+  arrange(year) %>%
+  datatable()
+
+#cases
+cases_out$cases_draws %>%
+  ungroup() %>%
+  select(study.country, year, cases_u, cases_r) %>%
+  group_by(study.country, year) %>%
+  median_qi(cases_u, cases_r) %>%
+  group_by(study.country) %>%
+  filter(cases_u > cases_r) %>%
+  slice_min(year) %>%
+  arrange(year) %>%
+  datatable()
+
+```
+
+
+Make a table of estimates for 2024 for presentation in the paper
+
+```{r}
+
+draws_2024 <- cases_out$cases_draws %>%
+  filter(year == 2024)
+
+cases_summary <- draws_2024 %>%
+  summarise(
+    .by = .draw,
+    cases_total = sum(cases_total, na.rm = TRUE),
+    cases_urban = sum(cases_u, na.rm = TRUE),
+    cases_rural = sum(cases_r, na.rm = TRUE),
+    n_countries = n_distinct(study.country)
+  ) %>%
+  mutate(
+    perc_urban = cases_urban / cases_total * 100,
+    perc_rural = cases_rural / cases_total * 100
+  )
+
+cases_summary_stats <- cases_summary %>%
+  summarise(
+    median_cases_total = median(cases_total),
+    lci_cases_total = quantile(cases_total, 0.025),
+    uci_cases_total = quantile(cases_total, 0.975),
+    median_cases_urban = median(cases_urban),
+    lci_cases_urban = quantile(cases_urban, 0.025),
+    uci_cases_urban = quantile(cases_urban, 0.975),
+    median_cases_rural = median(cases_rural),
+    lci_cases_rural = quantile(cases_rural, 0.025),
+    uci_cases_rural = quantile(cases_rural, 0.975),
+    median_perc_urban = median(perc_urban),
+    lci_perc_urban = quantile(perc_urban, 0.025),
+    uci_perc_urban = quantile(perc_urban, 0.975),
+    median_perc_rural = median(perc_rural),
+    lci_perc_rural = quantile(perc_rural, 0.025),
+    uci_perc_rural = quantile(perc_rural, 0.975),
+    n_countries = median(n_countries)
+  )
+
+pop_2024 <- pop_denominators_out %>%
+  filter(year == 2024) %>%
+  summarise(
+    total_pop = sum(population),
+    urban_pop = sum(urban_population),
+    rural_pop = sum(rural_population),
+    perc_urban = urban_pop / total_pop * 100,
+    perc_rural = rural_pop / total_pop * 100
+  )
+
+summary_table_2024 <- tibble(
+  metric = c("Total cases", "Urban cases", "Rural cases",
+             "Percent urban cases", "Percent rural cases",
+             "Total population", "Urban population", "Rural population",
+             "Percent urban population", "Percent rural population",
+             "Countries represented"),
+  median = c(
+    cases_summary_stats$median_cases_total,
+    cases_summary_stats$median_cases_urban,
+    cases_summary_stats$median_cases_rural,
+    cases_summary_stats$median_perc_urban,
+    cases_summary_stats$median_perc_rural,
+    pop_2024$total_pop,
+    pop_2024$urban_pop,
+    pop_2024$rural_pop,
+    pop_2024$perc_urban,
+    pop_2024$perc_rural,
+    cases_summary_stats$n_countries
+  ),
+  lci = c(
+    cases_summary_stats$lci_cases_total,
+    cases_summary_stats$lci_cases_urban,
+    cases_summary_stats$lci_cases_rural,
+    cases_summary_stats$lci_perc_urban,
+    cases_summary_stats$lci_perc_rural,
+    NA, NA, NA, NA, NA, NA
+  ),
+  uci = c(
+    cases_summary_stats$uci_cases_total,
+    cases_summary_stats$uci_cases_urban,
+    cases_summary_stats$uci_cases_rural,
+    cases_summary_stats$uci_perc_urban,
+    cases_summary_stats$uci_perc_rural,
+    NA, NA, NA, NA, NA, NA
+  )
+) %>%
+  # 6) Format numbers nicely
+  mutate(
+    median_fmt = if_else(str_detect(metric, "Percent"), 
+                         paste0(round(median, 1), "%"),
+                         comma(round(median))),
+    ci_fmt = if_else(!is.na(lci),
+                     paste0("(", comma(round(lci)), " – ", comma(round(uci)), ")"),
+                     NA_character_)
+  ) %>%
+  select(metric, median = median_fmt, `95% CrI` = ci_fmt)
+
+summary_table_2024 %>% datatable()
+
+```
+
+Make a table of estimates by country for 2000-2024
+
+```{r}
+supp_table <- cases_out$cases_draws %>%
+  select(study.country, WHO.region, population, urban_population, rural_population, year, cases_u, cases_r, cases_total, perc_u, perc_r) %>%
+  group_by(study.country, WHO.region, year, population, urban_population, rural_population) %>%
+  median_qi(cases_u, cases_r, cases_total, perc_u, perc_r) %>%
+  mutate(
+    population = comma(round(population)),
+    urban_population = comma(round(urban_population)),
+    rural_population = comma(round(rural_population)),
+
+    urban_cases     = sprintf("%s (%s–%s)",
+                              comma(round(cases_u)),
+                              comma(round(cases_u.lower)),
+                              comma(round(cases_u.upper))),
+    rural_cases     = sprintf("%s (%s–%s)",
+                              comma(round(cases_r)),
+                              comma(round(cases_r.lower)),
+                              comma(round(cases_r.upper))),
+    total_cases = sprintf("%s (%s–%s)",
+                              comma(round(cases_total)),
+                              comma(round(cases_total.lower)),
+                              comma(round(cases_total.upper))),
+    urban_perc      = sprintf("%.1f%% (%.1f–%.1f)",
+                              100*perc_u,
+                              100*perc_u.lower,
+                              100*perc_u.upper),
+    rural_perc      = sprintf("%.1f%% (%.1f–%.1f)",
+                              100*perc_r,
+                              100*perc_r.lower,
+                              100*perc_r.upper)
+  ) %>%
+  select(study.country, WHO.region, year, population, urban_population, rural_population, 
+         urban_cases, rural_cases, total_cases,
+         urban_perc, rural_perc)
+
+
+writexl::write_xlsx(supp_table, "output/S13 Table.xlsx")
+
+#number of countrys where >50% of TB was urban in 2024
+cases_out$cases_draws %>%
+  select(study.country, WHO.region, population, urban_population, rural_population, year, cases_u, cases_r, cases_total, perc_u, perc_r) %>%
+  group_by(study.country, WHO.region, year, population, urban_population, rural_population) %>%
+  median_qi(cases_u, cases_r, cases_total, perc_u, perc_r) %>%
+  filter(year == 2024) %>%
+  filter(perc_u > 0.5) %>%
+  select(study.country, perc_u) %>%
+  arrange(desc(perc_u)) %>%
+  print(n=Inf)
+
+#top 5 countries for rural and urban cases in 2024
+supp_table %>%
+  ungroup() %>%
+  mutate(
+    rural_cases_num = parse_number(rural_cases)
+  ) %>%
+  filter(year == 2024) %>%
+  slice_max(rural_cases_num, n = 5) %>%
+  datatable()
+
+supp_table %>%
+  ungroup() %>%
+  mutate(
+    urban_cases_num = parse_number(urban_cases)) %>%
+  filter(year == 2024) %>%
+  slice_max(urban_cases_num, n = 5) %>%
+  datatable()
+```
+
+Within the Africa region, which countries have the highest urban and rural burden?
+
+```{r}
+supp_table %>%
+  ungroup() %>%
+  filter(WHO.region == "Africa region") %>%
+  mutate(
+    rural_cases_num = parse_number(rural_cases)) %>%
+  filter(year == 2024) %>%
+  slice_max(rural_cases_num, n = 5) %>%
+  datatable()
+
+supp_table %>%
+  ungroup() %>%
+  filter(WHO.region == "Africa region") %>%
+  mutate(
+    urban_cases_num = parse_number(urban_cases)) %>%
+  filter(year == 2024) %>%
+  slice_max(urban_cases_num, n = 5) %>%
+  datatable()
+
+```
+
+
+```{r}
+
+```

@@ -1,0 +1,18 @@
+# R / Positron / RStudio
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+
+# knitr / Quarto render artefacts
+*_cache/
+*_files/
+*.html
+
+# macOS
+.DS_Store
+
+# Output
+output/fit_mv.rds
+output/timeEffectMod_EM_recoded.rds
+output/timeEffectMod.rds

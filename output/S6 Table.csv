@@ -1,0 +1,48 @@
+Survey ID,WHO region,Country/Year,Age inclusion,World Bank country classification,TB incidence (per 100k),Percent urban,Case definition,Diagnostic tests,Urban (n/N),Rural (n/N),Urban Prevalence (per 100k),Rural Prevalence (per 100k),Crude Urban: Rural Ratio,Risk of bias
+26865,Africa,Eswatini (National) 2018-2019,15+,Lower-middle income,441,23.8%,Adjusted bacteriologically-confirmed TB prevalence,Xpert and Culture,NA/1196,NA/8742,385,344,1.1,Low
+26942,Africa,Ethiopia (Dabat District) 2010-2010,14+,Low income,269,17.3%,Count of smear-positive TB cases,Smear,NA/5027,NA/18563,119,188,0.6,Not low
+22718,Africa,Ethiopia (Hetosa District) 2013-2013,15+,Low income,224,18.6%,Adjusted bacteriologically-confirmed TB prevalence,Culture and Smear,9/5903,36/27170,153,125,1.2,Low
+26913,Africa,Ethiopia (National) 2010-2011,15+,Low income,269,17.3%,Adjusted bacteriologically-confirmed TB prevalence,Culture and Smear,NA/7490,NA/34952,273,273,1.0,Low
+26881,Africa,Ethiopia (Tigray) 2011-2011,15+,Low income,253,17.7%,Adjusted bacteriologically-confirmed TB prevalence,Culture and Smear,17/4624,13/7551,193,222,0.9,Not low
+21508,Africa,Ghana (National) 2013-2013,15+,Lower-middle income,168,52.7%,Adjusted bacteriologically-confirmed TB prevalence,"Xpert, Culture and Smear",NA/33122,NA/28604,293,429,0.7,Low
+26924,Africa,Kenya (Karemo) 2010-2010,12+,Low income,531,23.6%,Count of bacteriologically-confirmed TB cases,Culture and Smear,1/275,15/4729,363,317,1.1,Not low
+26860,Africa,Kenya (National) 2015-2016,15+,Lower-middle income,348,26.1%,Adjusted bacteriologically-confirmed TB prevalence,"Xpert, Culture and Smear",NA/19444,NA/43606,760,453,1.7,Low
+26862,Africa,Lesotho (National) 2019-2019,15+,Lower-middle income,654,28.6%,Adjusted bacteriologically-confirmed TB prevalence,Xpert and Culture,40/8230,85/12490,453,670,0.7,Low
+26969,Africa,Malawi (National) 2013-2014,15+,Low income,228,16.1%,Adjusted bacteriologically-confirmed TB prevalence,"Xpert, Culture and Smear",29/3654,103/27925,1014,373,2.7,Low
+26869,Africa,Namibia (National) 2017-2018,15+,Upper-middle income,524,50.0%,Adjusted bacteriologically-confirmed TB prevalence,Xpert and Culture,54/12178,65/17317,537,391,1.4,Low
+26917,Africa,Nigeria (National) 2012-2012,15+,Lower-middle income,219,45.2%,Adjusted bacteriologically-confirmed TB prevalence,Culture and Smear,NA/NA,NA/NA,663,323,2.1,Not low
+26919,Africa,Tanzania (National) 2011-2012,15+,Low income,378,29.5%,Adjusted bacteriologically-confirmed TB prevalence,"Xpert, Culture and Smear",17/6340,102/30889,279,315,0.9,Not low
+26920,Africa,The Gambia (National) 2012-2013,15+,Low income,177,57.1%,Adjusted bacteriologically-confirmed TB prevalence,Culture and Smear,37/17546,34/25554,266,109,2.4,Low
+26870,Africa,Uganda (National) 2014-2015,15+,Low income,202,21.5%,Adjusted bacteriologically-confirmed TB prevalence,"Xpert, Culture and Smear",80/17338,80/23816,504,370,1.4,Low
+26875,Africa,Zambia (Lusaka Province) 2005-2005,15+,Low income,602,36.9%,Adjusted bacteriologically-confirmed TB prevalence,Culture and Smear,51/NA,28/NA,1200,650,1.8,Not low
+26918,Africa,Zambia (National) 2013-2014,15+,Lower-middle income,406,41.4%,Adjusted bacteriologically-confirmed TB prevalence,"Xpert, Culture and Smear",NA/16057,NA/30042,993,460,2.2,Low
+26857,Africa,Zimbabwe (National) 2014-2014,15+,Low income,278,32.5%,Adjusted bacteriologically-confirmed TB prevalence,"Xpert, Culture and Smear",31/9097,76/24639,355,337,1.1,Low
+26928,Eastern Mediterranean,Pakistan (National) 2010-2011,15+,Lower-middle income,276,35.0%,Adjusted bacteriologically-confirmed TB prevalence,"Xpert, Culture and Smear",117/47809,224/58104,310,470,0.7,Not low
+26989,Eastern Mediterranean,Sudan (National) 2013-2014,15+,Lower-middle income,94,33.7%,Adjusted bacteriologically-confirmed TB prevalence,Culture and Smear,NA/29912,NA/53290,275,136,2.0,Low
+26956,South-East Asia,Bangladesh (National) 2007-2009,15+,Low income,221,29.0%,Adjusted smear-positive TB prevalence,Culture and Smear,NA/26046,NA/26052,51,86,0.6,Not low
+26859,South-East Asia,Bangladesh (National) 2015-2016,15+,Lower-middle income,221,35.1%,Adjusted bacteriologically-confirmed TB prevalence,"Xpert, Culture and Smear",107/34814,171/63896,316,270,1.2,Low
+26861,South-East Asia,DPR Korea (National) 2015-2016,15+,Low income,NA,61.5%,Adjusted bacteriologically-confirmed TB prevalence,Culture and Smear,194/34413,143/23123,577,659,0.9,Low
+26939,South-East Asia,India (Faridabad District) 2008-2009,15+,Low income,291,30.2%,Count of bacteriologically-confirmed TB cases,Culture and Smear,40/57338,60/41261,69,145,0.5,Low
+26983,South-East Asia,India (Gujarat State) 2011-2012,15+,Lower-middle income,258,31.6%,Adjusted bacteriologically-confirmed TB prevalence,Culture and Smear,102/32940,156/39068,389,487,0.8,Low
+26929,South-East Asia,India (Jabalpur District) 2009-2010,15+,Lower-middle income,276,30.9%,Unadjusted smear-positive TB prevalence,Culture and Smear,NA/NA,NA/NA,153,348,0.4,Low
+26985,South-East Asia,India (Kanpur Nagar District) 2008-2010,15+,Lower-middle income,283,30.6%,Adjusted bacteriologically-confirmed TB prevalence,Culture and Smear,NA/NA,NA/NA,328,810,0.4,Low
+26872,South-East Asia,India (Mohali District) 2008-2010,15+,Lower-middle income,283,30.6%,Unadjusted bacteriologically-confirmed TB prevalence,Culture and Smear,NA/34161,NA/51609,11,32,0.3,Low
+28002,South-East Asia,India (Tamil Nadu) 2021-2022,15+,Lower-middle income,196,35.9%,Unadjusted bacteriologically-confirmed TB prevalence,"Xpert, Culture and Smear",97/62169,147/68763,157,214,0.7,Low
+26982,South-East Asia,India (Wardha District) 2007-2009,15+,Low income,291,30.2%,Adjusted bacteriologically-confirmed TB prevalence,Culture and Smear,19/14030,67/36302,153,189,0.8,Low
+26940,South-East Asia,Indonesia (National) 2004-2004,15+,Low income,363,45.1%,Adjusted smear-positive TB prevalence,Culture and Smear,NA/23150,NA/27004,102,106,1.0,Not low
+26858,South-East Asia,Indonesia (National) 2013-2014,15+,Lower-middle income,329,52.6%,Adjusted bacteriologically-confirmed TB prevalence,"Xpert, Culture and Smear",228/31871,198/36073,845,674,1.3,Low
+26915,South-East Asia,Myanmar (National) 2009-2010,15+,Low income,500,28.9%,Adjusted bacteriologically-confirmed TB prevalence,Culture and Smear,103/11254,208/40113,903,526,1.7,Low
+26864,South-East Asia,Myanmar (National) 2017-2018,15+,Lower-middle income,338,30.6%,Count of bacteriologically-confirmed TB cases,"Xpert, Culture and Smear",136/24137,186/42343,563,439,1.3,Not low
+26975,South-East Asia,Thailand (National) 2012-2012,15+,Upper-middle income,172,45.4%,Unadjusted bacteriologically-confirmed TB prevalence,"Xpert, Culture and Smear",21/NA,121/NA,240,224,1.1,Not low
+28646,Western Pacific,Cambodia (National) 2023-2024,15+,Lower-middle income,272,26.0%,Adjusted bacteriologically-confirmed TB prevalence,Xpert and Culture,78/13158,117/21678,596,509,1.2,Low
+26740,Western Pacific,China (Multiple Areas) 2013-2013,65+,Upper-middle income,70,53.0%,Unadjusted bacteriologically-confirmed TB prevalence,Culture and Smear,14/12933,48/21336,108,224,0.5,Not low
+26981,Western Pacific,China (National) 2000-2000,15+,Low income,107,35.9%,Adjusted bacteriologically-confirmed TB prevalence,Culture and Smear,NA/NA,NA/NA,152,224,0.7,Low
+26949,Western Pacific,China (National) 2010-2010,15+,Lower-middle income,76,49.2%,Adjusted bacteriologically-confirmed TB prevalence,Culture and Smear,NA/NA,NA/NA,73,163,0.4,Low
+26951,Western Pacific,China (Shandong Province) 2010-2010,15+,Lower-middle income,76,49.2%,Adjusted bacteriologically-confirmed TB prevalence,Culture and Smear,NA/26101,NA/28178,9,43,0.2,Low
+24214,Western Pacific,China (Xinjiang Uyghur Region) 2010-2011,15+,Lower-middle income,76,49.2%,Adjusted bacteriologically-confirmed TB prevalence,Culture and Smear,NA/8405,NA/12104,109,506,0.2,Low
+26905,Western Pacific,Lao Pdr (National) 2010-2011,15+,Low income,221,30.1%,Adjusted bacteriologically-confirmed TB prevalence,Culture and Smear,42/10209,195/29003,436,663,0.7,Low
+26866,Western Pacific,Mongolia (National) 2014-2015,15+,Lower-middle income,428,68.2%,Count of bacteriologically-confirmed TB cases,"Xpert, Culture and Smear",142/27112,106/23197,523,456,1.1,Low
+26868,Western Pacific,Philippines (National) 2016-2016,15+,Lower-middle income,554,46.5%,Count of bacteriologically-confirmed TB cases,"Xpert, Culture and Smear",244/21526,222/25163,1133,882,1.3,Low
+26944,Western Pacific,Phillipines (National) 2007-2007,10+,Lower-middle income,520,45.5%,Adjusted bacteriologically-confirmed TB prevalence,Culture and Smear,NA/8331,NA/11635,670,650,1.0,Not low
+26973,Western Pacific,Viet Nam (National) 2006-2007,15+,Low income,260,27.9%,Adjusted bacteriologically-confirmed TB prevalence,Culture and Smear,72/26357,197/67822,282,344,0.8,Low
+24644,Western Pacific,Viet Nam (National) 2017-2018,15+,Lower-middle income,182,35.9%,Count of bacteriologically-confirmed TB cases,"Xpert, Culture and Smear",90/18656,131/43107,482,303,1.6,Low
